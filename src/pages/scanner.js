@@ -1,0 +1,500 @@
+// ============================================
+// ScanPro — Scanner Page
+// ============================================
+
+import { PDFDocument } from 'pdf-lib';
+import i18n from '../i18n.js';
+import toast from '../toast.js';
+import store from '../store.js';
+import { readFileAsDataURL, compressImage, loadImage, downloadBlob, createFileInput, uid } from '../utils.js';
+
+let pages = []; // { id, dataUrl, name }
+let cameraStream = null;
+let currentMode = 'upload'; // 'camera' or 'upload'
+
+export function render() {
+  const t = (key) => i18n.t(key);
+  return `
+    <div class="scanner-container animate-fade-in-up">
+      <div class="page-header">
+        <h1 data-i18n="scanner.title">${t('scanner.title')}</h1>
+        <p data-i18n="scanner.subtitle">${t('scanner.subtitle')}</p>
+      </div>
+
+      <!-- Mode Selection -->
+      <div class="scanner-modes">
+        <button class="scanner-mode-btn ${currentMode === 'camera' ? 'active' : ''}" id="mode-camera" data-mode="camera">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          <span data-i18n="scanner.mode.camera">${t('scanner.mode.camera')}</span>
+        </button>
+        <button class="scanner-mode-btn ${currentMode === 'upload' ? 'active' : ''}" id="mode-upload" data-mode="upload">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <span data-i18n="scanner.mode.upload">${t('scanner.mode.upload')}</span>
+        </button>
+      </div>
+
+      <!-- Camera View -->
+      <div id="camera-section" class="camera-section" style="display:${currentMode === 'camera' ? 'block' : 'none'}">
+        <div class="camera-container" id="camera-container">
+          <video id="camera-video" autoplay playsinline></video>
+          <canvas id="camera-canvas" style="display:none;"></canvas>
+          <div class="camera-controls" id="camera-controls" style="display:none;">
+            <button class="camera-switch-btn" id="camera-switch" title="${t('scanner.camera.switch')}">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            </button>
+            <button class="capture-btn" id="capture-btn" title="${t('scanner.camera.capture')}"></button>
+            <button class="camera-switch-btn" id="camera-stop" title="${t('scanner.camera.stop')}">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+            </button>
+          </div>
+          <div id="camera-placeholder" class="empty-state" style="padding: var(--space-8);">
+            <button class="btn btn-primary btn-lg" id="start-camera">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+              <span data-i18n="scanner.camera.start">${t('scanner.camera.start')}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Upload Section -->
+      <div id="upload-section" style="display:${currentMode === 'upload' ? 'block' : 'none'}">
+        <div class="dropzone" id="scanner-dropzone">
+          <div class="dropzone-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          </div>
+          <div class="dropzone-text">
+            <h3 data-i18n="scanner.dropzone.title">${t('scanner.dropzone.title')}</h3>
+            <p data-i18n="scanner.dropzone.subtitle">${t('scanner.dropzone.subtitle')}</p>
+            <button class="btn btn-primary mt-4" id="browse-files">
+              <span data-i18n="scanner.dropzone.browse">${t('scanner.dropzone.browse')}</span>
+            </button>
+          </div>
+          <input type="file" id="file-input" accept="image/*" multiple style="display:none;" />
+        </div>
+      </div>
+
+      <!-- Pages Preview -->
+      <div id="pages-section" style="display:${pages.length > 0 ? 'block' : 'none'}">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold">
+            <span data-i18n="scanner.pages">${t('scanner.pages')}</span>
+            <span class="badge badge-primary ml-2" id="page-count">${pages.length}</span>
+          </h3>
+          <button class="btn btn-ghost btn-sm" id="clear-all" style="display:${pages.length > 0 ? 'inline-flex' : 'none'}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            <span data-i18n="scanner.clearAll">${t('scanner.clearAll')}</span>
+          </button>
+        </div>
+        <p class="text-xs text-secondary mb-4" data-i18n="scanner.reorder">${t('scanner.reorder')}</p>
+        <div class="grid-auto" id="pages-grid">
+          ${pages.map((page, i) => `
+            <div class="thumbnail" data-id="${page.id}" draggable="true">
+              <span class="thumbnail-number">${i + 1}</span>
+              <img src="${page.dataUrl}" alt="Page ${i + 1}" />
+              <button class="thumbnail-remove" data-remove="${page.id}">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+
+      <!-- PDF Settings -->
+      <div id="settings-section" style="display:${pages.length > 0 ? 'block' : 'none'}">
+        <h3 class="text-lg font-semibold mb-4" data-i18n="scanner.settings">${t('scanner.settings')}</h3>
+        <div class="page-settings">
+          <div class="input-group">
+            <label data-i18n="scanner.pageSize">${t('scanner.pageSize')}</label>
+            <select class="select" id="page-size">
+              <option value="a4">A4 (210 × 297 mm)</option>
+              <option value="letter">Letter (8.5 × 11 in)</option>
+              <option value="legal">Legal (8.5 × 14 in)</option>
+              <option value="a3">A3 (297 × 420 mm)</option>
+              <option value="a5">A5 (148 × 210 mm)</option>
+            </select>
+          </div>
+          <div class="input-group">
+            <label data-i18n="scanner.orientation">${t('scanner.orientation')}</label>
+            <select class="select" id="page-orientation">
+              <option value="auto" data-i18n="scanner.orientation.auto">${t('scanner.orientation.auto')}</option>
+              <option value="portrait" data-i18n="scanner.orientation.portrait">${t('scanner.orientation.portrait')}</option>
+              <option value="landscape" data-i18n="scanner.orientation.landscape">${t('scanner.orientation.landscape')}</option>
+            </select>
+          </div>
+          <div class="input-group">
+            <label data-i18n="scanner.quality">${t('scanner.quality')}</label>
+            <input type="range" class="range-slider" id="image-quality" min="30" max="100" value="80" />
+            <span class="text-xs text-secondary" id="quality-label">80%</span>
+          </div>
+          <div class="input-group">
+            <label data-i18n="scanner.margins">${t('scanner.margins')}</label>
+            <select class="select" id="page-margins">
+              <option value="none">None</option>
+              <option value="small" selected>Small (10mm)</option>
+              <option value="medium">Medium (20mm)</option>
+              <option value="large">Large (30mm)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Generate Button -->
+      <div class="action-bar" id="action-bar" style="display:${pages.length > 0 ? 'flex' : 'none'}">
+        <button class="btn btn-primary btn-lg btn-block" id="generate-pdf">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span data-i18n="scanner.generate">${t('scanner.generate')}</span>
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+export function init() {
+  setupDropzone();
+  setupCamera();
+  setupModeToggle();
+  setupPages();
+  setupGenerate();
+  setupQualitySlider();
+}
+
+function setupModeToggle() {
+  document.querySelectorAll('.scanner-mode-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.mode;
+      currentMode = mode;
+      document.querySelectorAll('.scanner-mode-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('camera-section').style.display = mode === 'camera' ? 'block' : 'none';
+      document.getElementById('upload-section').style.display = mode === 'upload' ? 'block' : 'none';
+      if (mode !== 'camera' && cameraStream) {
+        stopCamera();
+      }
+    });
+  });
+}
+
+function setupDropzone() {
+  const dropzone = document.getElementById('scanner-dropzone');
+  const fileInput = document.getElementById('file-input');
+  const browseBtn = document.getElementById('browse-files');
+
+  if (!dropzone) return;
+
+  browseBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    fileInput.click();
+  });
+
+  dropzone.addEventListener('click', () => fileInput.click());
+
+  dropzone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropzone.classList.add('dragover');
+  });
+
+  dropzone.addEventListener('dragleave', () => {
+    dropzone.classList.remove('dragover');
+  });
+
+  dropzone.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    dropzone.classList.remove('dragover');
+    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+    if (files.length > 0) await addFiles(files);
+  });
+
+  fileInput.addEventListener('change', async (e) => {
+    const files = Array.from(e.target.files);
+    if (files.length > 0) await addFiles(files);
+    fileInput.value = '';
+  });
+}
+
+async function addFiles(files) {
+  for (const file of files) {
+    try {
+      const dataUrl = await readFileAsDataURL(file);
+      pages.push({ id: uid(), dataUrl, name: file.name });
+    } catch (err) {
+      toast.error(`Failed to load ${file.name}`);
+    }
+  }
+  updatePagesUI();
+  toast.success(i18n.t('common.success'));
+}
+
+function setupCamera() {
+  const startBtn = document.getElementById('start-camera');
+  const captureBtn = document.getElementById('capture-btn');
+  const switchBtn = document.getElementById('camera-switch');
+  const stopBtn = document.getElementById('camera-stop');
+
+  startBtn?.addEventListener('click', startCamera);
+  captureBtn?.addEventListener('click', capturePhoto);
+  switchBtn?.addEventListener('click', switchCamera);
+  stopBtn?.addEventListener('click', stopCamera);
+}
+
+let facingMode = 'environment';
+
+async function startCamera() {
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode, width: { ideal: 1920 }, height: { ideal: 1080 } }
+    });
+    const video = document.getElementById('camera-video');
+    video.srcObject = cameraStream;
+    document.getElementById('camera-controls').style.display = 'flex';
+    document.getElementById('camera-placeholder').style.display = 'none';
+  } catch (err) {
+    toast.error(i18n.t('scanner.camera.error'));
+  }
+}
+
+function stopCamera() {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(t => t.stop());
+    cameraStream = null;
+  }
+  const video = document.getElementById('camera-video');
+  if (video) video.srcObject = null;
+  const controls = document.getElementById('camera-controls');
+  if (controls) controls.style.display = 'none';
+  const placeholder = document.getElementById('camera-placeholder');
+  if (placeholder) placeholder.style.display = 'flex';
+}
+
+async function switchCamera() {
+  facingMode = facingMode === 'environment' ? 'user' : 'environment';
+  stopCamera();
+  await startCamera();
+}
+
+function capturePhoto() {
+  const video = document.getElementById('camera-video');
+  const canvas = document.getElementById('camera-canvas');
+  if (!video || !canvas) return;
+
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0);
+
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+  pages.push({ id: uid(), dataUrl, name: `Capture_${pages.length + 1}.jpg` });
+
+  // Flash effect
+  const captureBtn = document.getElementById('capture-btn');
+  captureBtn.classList.add('flash');
+  setTimeout(() => captureBtn.classList.remove('flash'), 300);
+
+  updatePagesUI();
+  toast.success(i18n.t('scanner.camera.capture') + ' ✓');
+}
+
+function setupPages() {
+  // Event delegation for remove buttons and drag
+  document.getElementById('page-content')?.addEventListener('click', (e) => {
+    const removeBtn = e.target.closest('[data-remove]');
+    if (removeBtn) {
+      const id = removeBtn.dataset.remove;
+      pages = pages.filter(p => p.id !== id);
+      updatePagesUI();
+    }
+  });
+
+  // Clear all
+  document.getElementById('clear-all')?.addEventListener('click', () => {
+    pages = [];
+    updatePagesUI();
+  });
+
+  // Drag and drop reorder
+  setupDragReorder();
+}
+
+function setupDragReorder() {
+  const grid = document.getElementById('pages-grid');
+  if (!grid) return;
+
+  let draggedId = null;
+
+  grid.addEventListener('dragstart', (e) => {
+    const thumb = e.target.closest('.thumbnail');
+    if (!thumb) return;
+    draggedId = thumb.dataset.id;
+    thumb.style.opacity = '0.4';
+    e.dataTransfer.effectAllowed = 'move';
+  });
+
+  grid.addEventListener('dragend', (e) => {
+    const thumb = e.target.closest('.thumbnail');
+    if (thumb) thumb.style.opacity = '1';
+  });
+
+  grid.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  });
+
+  grid.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const target = e.target.closest('.thumbnail');
+    if (!target || !draggedId) return;
+
+    const targetId = target.dataset.id;
+    if (draggedId === targetId) return;
+
+    const fromIdx = pages.findIndex(p => p.id === draggedId);
+    const toIdx = pages.findIndex(p => p.id === targetId);
+
+    const [moved] = pages.splice(fromIdx, 1);
+    pages.splice(toIdx, 0, moved);
+    updatePagesUI();
+  });
+}
+
+function updatePagesUI() {
+  const pagesSection = document.getElementById('pages-section');
+  const settingsSection = document.getElementById('settings-section');
+  const actionBar = document.getElementById('action-bar');
+  const pageCount = document.getElementById('page-count');
+  const clearAll = document.getElementById('clear-all');
+  const pagesGrid = document.getElementById('pages-grid');
+
+  if (!pagesSection) return;
+
+  const show = pages.length > 0;
+  pagesSection.style.display = show ? 'block' : 'none';
+  settingsSection.style.display = show ? 'block' : 'none';
+  actionBar.style.display = show ? 'flex' : 'none';
+
+  if (pageCount) pageCount.textContent = pages.length;
+  if (clearAll) clearAll.style.display = show ? 'inline-flex' : 'none';
+
+  if (pagesGrid) {
+    pagesGrid.innerHTML = pages.map((page, i) => `
+      <div class="thumbnail animate-scale-in" data-id="${page.id}" draggable="true">
+        <span class="thumbnail-number">${i + 1}</span>
+        <img src="${page.dataUrl}" alt="Page ${i + 1}" loading="lazy" />
+        <button class="thumbnail-remove" data-remove="${page.id}">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+    `).join('');
+    setupDragReorder();
+  }
+}
+
+function setupQualitySlider() {
+  const slider = document.getElementById('image-quality');
+  const label = document.getElementById('quality-label');
+  if (slider && label) {
+    slider.addEventListener('input', () => {
+      label.textContent = slider.value + '%';
+    });
+  }
+}
+
+function setupGenerate() {
+  document.getElementById('generate-pdf')?.addEventListener('click', generatePDF);
+}
+
+const PAGE_SIZES = {
+  a4: [595.28, 841.89],
+  letter: [612, 792],
+  legal: [612, 1008],
+  a3: [841.89, 1190.55],
+  a5: [419.53, 595.28],
+};
+
+const MARGINS = {
+  none: 0,
+  small: 28.35,  // 10mm
+  medium: 56.7,  // 20mm
+  large: 85.05,  // 30mm
+};
+
+async function generatePDF() {
+  if (pages.length === 0) return;
+
+  const btn = document.getElementById('generate-pdf');
+  const btnText = btn.querySelector('span');
+  const originalText = btnText.textContent;
+  btn.disabled = true;
+  btnText.textContent = i18n.t('scanner.generating');
+
+  try {
+    const pdfDoc = await PDFDocument.create();
+    const pageSize = document.getElementById('page-size').value;
+    const orientation = document.getElementById('page-orientation').value;
+    const quality = parseInt(document.getElementById('image-quality').value) / 100;
+    const margin = MARGINS[document.getElementById('page-margins').value];
+
+    const [baseW, baseH] = PAGE_SIZES[pageSize] || PAGE_SIZES.a4;
+
+    for (const pageData of pages) {
+      // Compress image
+      const compressed = await compressImage(pageData.dataUrl, quality, 3000);
+      const img = await loadImage(compressed);
+
+      // Determine orientation
+      let w = baseW, h = baseH;
+      if (orientation === 'auto') {
+        if (img.width > img.height) { w = baseH; h = baseW; }
+      } else if (orientation === 'landscape') {
+        w = baseH; h = baseW;
+      }
+
+      const page = pdfDoc.addPage([w, h]);
+      const imgBytes = await fetch(compressed).then(r => r.arrayBuffer());
+      const embeddedImg = await pdfDoc.embedJpg(imgBytes);
+
+      const drawW = w - margin * 2;
+      const drawH = h - margin * 2;
+
+      // Fit image to page
+      const imgAspect = embeddedImg.width / embeddedImg.height;
+      const pageAspect = drawW / drawH;
+
+      let finalW, finalH;
+      if (imgAspect > pageAspect) {
+        finalW = drawW;
+        finalH = drawW / imgAspect;
+      } else {
+        finalH = drawH;
+        finalW = drawH * imgAspect;
+      }
+
+      const x = margin + (drawW - finalW) / 2;
+      const y = margin + (drawH - finalH) / 2;
+
+      page.drawImage(embeddedImg, { x, y, width: finalW, height: finalH });
+    }
+
+    const pdfBytes = await pdfDoc.save();
+    const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+    downloadBlob(blob, `PieScanner_${new Date().toISOString().slice(0, 10)}.pdf`);
+
+    // Save to history
+    await store.addHistory({
+      type: 'scan',
+      name: `Scan_${pages.length}_pages.pdf`,
+      size: pdfBytes.length,
+      pageCount: pages.length,
+    });
+
+    toast.success(i18n.t('common.success'));
+  } catch (err) {
+    console.error(err);
+    toast.error(i18n.t('common.error'));
+  } finally {
+    btn.disabled = false;
+    btnText.textContent = originalText;
+  }
+}
+
+export function destroy() {
+  stopCamera();
+}
