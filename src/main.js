@@ -183,6 +183,12 @@ async function init() {
   document.querySelectorAll('.tab-item').forEach(item => {
     item.addEventListener('click', (e) => {
       e.preventDefault();
+      
+      // If clicking the central Scan FAB, set a flag to auto-open camera
+      if (item.id === 'tab-scan-main') {
+        localStorage.setItem('auto-start-camera', 'true');
+      }
+      
       const page = item.dataset.page;
       if (page) navigateTo(page);
     });

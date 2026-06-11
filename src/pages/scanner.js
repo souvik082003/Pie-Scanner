@@ -59,13 +59,21 @@ export function render() {
           <video id="camera-video" autoplay playsinline></video>
           <canvas id="camera-canvas" style="display:none;"></canvas>
           <div class="camera-controls" id="camera-controls" style="display:none;">
-            <button class="camera-switch-btn" id="camera-switch" title="${t('scanner.camera.switch')}">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            <!-- Thumbnail stack (Left) -->
+            <button class="camera-thumbnail-btn" id="camera-thumbnail-btn" style="visibility: hidden;">
+              <img id="camera-thumbnail-img" src="" alt="Latest capture" />
+              <div class="camera-badge" id="camera-badge">0</div>
             </button>
+
+            <!-- Large Capture Button (Center) -->
             <button class="capture-btn" id="capture-btn" title="${t('scanner.camera.capture')}"></button>
-            <button class="camera-switch-btn" id="camera-stop" title="${t('scanner.camera.stop')}">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+            
+            <!-- Finish / Tick Button (Right) -->
+            <button class="camera-done-btn" id="camera-done-btn" title="${t('common.done')}">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
             </button>
+            
+            <!-- Hide switch button, move to top if needed, but for now we'll just keep it hidden or add a top bar later. Let's keep it minimal as requested. -->
           </div>
           <div id="camera-placeholder" class="empty-state" style="padding: var(--space-8);">
             <button class="btn btn-primary btn-lg" id="start-camera">
@@ -232,7 +240,24 @@ export function init() {
   setupGenerate();
   setupQualitySlider();
   setupEditorOverlay();
+  
+  if (localStorage.getItem('auto-start-camera') === 'true') {
+    localStorage.removeItem('auto-start-camera');
+    currentMode = 'camera';
+    document.querySelectorAll('.scanner-mode-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.mode === 'camera');
+    });
+    document.getElementById('camera-section').style.display = 'block';
+    document.getElementById('upload-section').style.display = 'none';
+    
+    // Slight delay to ensure DOM is ready before requesting camera
+    setTimeout(() => {
+      const startBtn = document.getElementById('start-camera');
+      if (startBtn) startBtn.click();
+    }, 100);
+  }
 }
+
 
 function setupModeToggle() {
   document.querySelectorAll('.scanner-mode-btn').forEach(btn => {
@@ -303,13 +328,13 @@ async function addFiles(files) {
 function setupCamera() {
   const startBtn = document.getElementById('start-camera');
   const captureBtn = document.getElementById('capture-btn');
-  const switchBtn = document.getElementById('camera-switch');
-  const stopBtn = document.getElementById('camera-stop');
+  const doneBtn = document.getElementById('camera-done-btn');
 
   startBtn?.addEventListener('click', startCamera);
   captureBtn?.addEventListener('click', capturePhoto);
-  switchBtn?.addEventListener('click', switchCamera);
-  stopBtn?.addEventListener('click', stopCamera);
+  doneBtn?.addEventListener('click', finishScanning);
+  
+  // We'll add a way to switch camera later if needed, but keeping UI clean for now.
 }
 
 let facingMode = 'environment';
@@ -324,6 +349,9 @@ async function startCamera() {
     video.play().catch(console.error);
     document.getElementById('camera-controls').style.display = 'flex';
     document.getElementById('camera-placeholder').style.display = 'none';
+    
+    // Reset thumbnail UI on start if no pages
+    updateCameraThumbnail();
   } catch (err) {
     toast.error(i18n.t('scanner.camera.error'));
   }
@@ -342,10 +370,21 @@ function stopCamera() {
   if (placeholder) placeholder.style.display = 'flex';
 }
 
-async function switchCamera() {
-  facingMode = facingMode === 'environment' ? 'user' : 'environment';
-  stopCamera();
-  await startCamera();
+function updateCameraThumbnail() {
+  const thumbBtn = document.getElementById('camera-thumbnail-btn');
+  const thumbImg = document.getElementById('camera-thumbnail-img');
+  const badge = document.getElementById('camera-badge');
+  const doneBtn = document.getElementById('camera-done-btn');
+  
+  if (pages.length > 0) {
+    thumbBtn.style.visibility = 'visible';
+    thumbImg.src = pages[pages.length - 1].dataUrl;
+    badge.textContent = pages.length;
+    doneBtn.style.visibility = 'visible';
+  } else {
+    thumbBtn.style.visibility = 'hidden';
+    doneBtn.style.visibility = 'hidden';
+  }
 }
 
 function capturePhoto() {
@@ -366,8 +405,22 @@ function capturePhoto() {
   captureBtn.classList.add('flash');
   setTimeout(() => captureBtn.classList.remove('flash'), 300);
 
+  updateCameraThumbnail();
+  toast.success(`Page ${pages.length} captured`);
+}
+
+function finishScanning() {
+  stopCamera();
   updatePagesUI();
-  toast.success(i18n.t('scanner.camera.capture') + ' ✓');
+  
+  // Transition UI
+  document.getElementById('camera-section').style.display = 'none';
+  document.getElementById('pages-section').style.display = 'block';
+  document.getElementById('settings-section').style.display = 'block';
+  document.getElementById('action-bar').style.display = 'flex';
+  
+  // Scroll down to pages area
+  document.getElementById('pages-section').scrollIntoView({ behavior: 'smooth' });
 }
 
 function setupPages() {
