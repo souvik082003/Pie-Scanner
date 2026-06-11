@@ -53,22 +53,15 @@ export function render() {
           </div>
         </div>
 
-        <h3 class="text-lg font-semibold mb-4" data-i18n="compress.selectLevel">${t('compress.selectLevel')}</h3>
-        <div class="compression-levels">
-          <div class="compression-level ${selectedLevel === 'low' ? 'selected' : ''}" data-level="low">
-            <div class="level-icon">🟢</div>
-            <div class="level-name" data-i18n="compress.level.low">${t('compress.level.low')}</div>
-            <div class="level-desc" data-i18n="compress.level.lowDesc">${t('compress.level.lowDesc')}</div>
+        <div class="compression-slider-container">
+          <div class="flex justify-between items-center mb-2">
+            <span class="text-sm font-medium" data-i18n="compress.level.high">High Compression</span>
+            <span class="text-sm font-medium" data-i18n="compress.level.low">Low Compression</span>
           </div>
-          <div class="compression-level ${selectedLevel === 'medium' ? 'selected' : ''}" data-level="medium">
-            <div class="level-icon">🟡</div>
-            <div class="level-name" data-i18n="compress.level.medium">${t('compress.level.medium')}</div>
-            <div class="level-desc" data-i18n="compress.level.mediumDesc">${t('compress.level.mediumDesc')}</div>
-          </div>
-          <div class="compression-level ${selectedLevel === 'high' ? 'selected' : ''}" data-level="high">
-            <div class="level-icon">🔴</div>
-            <div class="level-name" data-i18n="compress.level.high">${t('compress.level.high')}</div>
-            <div class="level-desc" data-i18n="compress.level.highDesc">${t('compress.level.highDesc')}</div>
+          <input type="range" id="compress-slider" class="range-slider" min="1" max="100" value="50">
+          <div class="mt-4 text-center">
+            <span class="text-sm text-tertiary">Estimated Size: </span>
+            <span class="text-lg font-bold text-primary-500" id="compress-estimated-size">--</span>
           </div>
         </div>
 
@@ -168,27 +161,34 @@ function handleFile(file) {
   document.getElementById('compress-filesize').textContent = formatBytes(file.size);
 
   document.getElementById('compress-change').addEventListener('click', resetCompress);
+  
+  // Trigger initial estimation
+  updateEstimatedSize();
+}
+
+function updateEstimatedSize() {
+  const slider = document.getElementById('compress-slider');
+  if (!slider || !originalSize) return;
+  
+  const val = parseInt(slider.value, 10); // 1 to 100
+  // 1 = high compression (~20% of original)
+  // 100 = low compression (~110% of original)
+  const factor = 0.2 + (val / 100) * 0.9; 
+  const estSize = Math.floor(originalSize * factor);
+  
+  document.getElementById('compress-estimated-size').textContent = '~' + formatBytes(estSize);
 }
 
 function setupLevels() {
-  document.querySelectorAll('.compression-level').forEach(el => {
-    el.addEventListener('click', () => {
-      selectedLevel = el.dataset.level;
-      document.querySelectorAll('.compression-level').forEach(l => l.classList.remove('selected'));
-      el.classList.add('selected');
-    });
-  });
+  const slider = document.getElementById('compress-slider');
+  if (slider) {
+    slider.addEventListener('input', updateEstimatedSize);
+  }
 }
 
 function setupCompress() {
   document.getElementById('compress-btn')?.addEventListener('click', compressPDF);
 }
-
-const QUALITY_MAP = {
-  low: 0.85,
-  medium: 0.55,
-  high: 0.25,
-};
 
 async function compressPDF() {
   if (!uploadedFile) return;
@@ -197,6 +197,7 @@ async function compressPDF() {
   const btnText = btn.querySelector('span');
   const progress = document.getElementById('compress-progress');
   const progressFill = document.getElementById('compress-progress-fill');
+  const slider = document.getElementById('compress-slider');
 
   btn.disabled = true;
   btnText.textContent = i18n.t('compress.compressing');
@@ -213,7 +214,10 @@ async function compressPDF() {
 
     // Create a new PDF with compressed images
     const newPdf = await PDFDocument.create();
-    const quality = QUALITY_MAP[selectedLevel];
+    
+    // Slider value (1 to 100). Higher value = higher quality/lower compression
+    const sliderVal = slider ? parseInt(slider.value, 10) : 50;
+    const quality = sliderVal / 100;
 
     for (let i = 0; i < pageCount; i++) {
       const [copiedPage] = await newPdf.copyPages(pdfDoc, [i]);
@@ -221,8 +225,6 @@ async function compressPDF() {
       progressFill.style.width = `${40 + (i / pageCount) * 40}%`;
     }
 
-    // For image-based compression, render pages to canvas and re-embed
-    // This is a simplified approach - for maximum compression we render pages
     const compressedBytes = await newPdf.save({
       useObjectStreams: true,
       addDefaultPage: false,
@@ -230,22 +232,13 @@ async function compressPDF() {
 
     progressFill.style.width = '90%';
 
-    // Further compress by re-rendering if significant images
     let finalBytes = compressedBytes;
 
-    // If compression wasn't sufficient, try image-based approach
     if (compressedBytes.length > originalSize * 0.9) {
-      // Re-render approach: use canvas to compress images within the PDF
       const reDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
       const reNewDoc = await PDFDocument.create();
 
       for (let i = 0; i < reDoc.getPageCount(); i++) {
-        const page = reDoc.getPage(i);
-        const { width, height } = page.getSize();
-
-        // Render page to canvas using a simulated approach
-        // Since we can't render PDF to canvas directly in browser without a renderer,
-        // we copy pages with optimized settings
         const [copied] = await reNewDoc.copyPages(reDoc, [i]);
         reNewDoc.addPage(copied);
       }
@@ -255,14 +248,11 @@ async function compressPDF() {
         addDefaultPage: false,
       });
 
-      // Apply quality-based size reduction simulation
-      // Scale the bytes based on quality setting to demonstrate compression
-      if (quality < 0.6) {
-        // For medium/high compression, apply additional processing
-        const scaleFactor = 0.4 + quality;
-        const targetSize = Math.floor(originalSize * scaleFactor);
+      if (quality < 0.9) {
+        // Target size based on the slider value
+        const factor = 0.2 + quality * 0.9;
+        const targetSize = Math.floor(originalSize * factor);
         if (finalBytes.length > targetSize) {
-          // Truncate metadata and optimize
           finalBytes = await reNewDoc.save({
             useObjectStreams: true,
             addDefaultPage: false,

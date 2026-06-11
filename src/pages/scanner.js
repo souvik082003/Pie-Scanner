@@ -58,7 +58,27 @@ export function render() {
         <div class="camera-container" id="camera-container">
           <video id="camera-video" autoplay playsinline></video>
           <canvas id="camera-canvas" style="display:none;"></canvas>
-          <div class="camera-controls" id="camera-controls" style="display:none;">
+          
+          <!-- Top Utilities Bar -->
+          <div class="camera-top-utils" id="camera-top-utils" style="display:none;">
+            <!-- Close Button (Left) -->
+            <button class="camera-close-btn" id="camera-close-btn">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+            
+            <div class="camera-top-right-utils">
+              <!-- Flash Toggle -->
+              <button class="camera-util-btn" id="camera-flash-btn" title="Toggle Flashlight" style="display: none;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              </button>
+              <!-- Flip Camera -->
+              <button class="camera-util-btn" id="camera-flip-btn" title="Flip Camera">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              </button>
+            </div>
+          </div>
+          
+          <div class="camera-controls" id="camera-controls" style="display:none; padding: 32px 24px; background: black;">
             <!-- Thumbnail stack (Left) -->
             <button class="camera-thumbnail-btn" id="camera-thumbnail-btn" style="visibility: hidden;">
               <img id="camera-thumbnail-img" src="" alt="Latest capture" />
@@ -66,14 +86,17 @@ export function render() {
             </button>
 
             <!-- Large Capture Button (Center) -->
-            <button class="capture-btn" id="capture-btn" title="${t('scanner.camera.capture')}"></button>
+            <button class="capture-btn" id="capture-btn" title="${t('scanner.camera.capture')}">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                <circle cx="12" cy="13" r="4"/>
+              </svg>
+            </button>
             
             <!-- Finish / Tick Button (Right) -->
             <button class="camera-done-btn" id="camera-done-btn" title="${t('common.done')}">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
             </button>
-            
-            <!-- Hide switch button, move to top if needed, but for now we'll just keep it hidden or add a top bar later. Let's keep it minimal as requested. -->
           </div>
           <div id="camera-placeholder" class="empty-state" style="padding: var(--space-8);">
             <button class="btn btn-primary btn-lg" id="start-camera">
@@ -244,6 +267,10 @@ export function init() {
   if (localStorage.getItem('auto-start-camera') === 'true') {
     localStorage.removeItem('auto-start-camera');
     currentMode = 'camera';
+    
+    // Apply full-screen instantly to hide the UI flash
+    document.body.classList.add('camera-fullscreen');
+    
     document.querySelectorAll('.scanner-mode-btn').forEach(b => {
       b.classList.toggle('active', b.dataset.mode === 'camera');
     });
@@ -252,9 +279,8 @@ export function init() {
     
     // Slight delay to ensure DOM is ready before requesting camera
     setTimeout(() => {
-      const startBtn = document.getElementById('start-camera');
-      if (startBtn) startBtn.click();
-    }, 100);
+      startCamera();
+    }, 50);
   }
 }
 
@@ -270,6 +296,9 @@ function setupModeToggle() {
       document.getElementById('upload-section').style.display = mode === 'upload' ? 'block' : 'none';
       if (mode !== 'camera' && cameraStream) {
         stopCamera();
+      } else if (mode === 'camera' && !cameraStream) {
+        // Auto-start camera if we switch to camera mode
+        startCamera();
       }
     });
   });
@@ -329,45 +358,135 @@ function setupCamera() {
   const startBtn = document.getElementById('start-camera');
   const captureBtn = document.getElementById('capture-btn');
   const doneBtn = document.getElementById('camera-done-btn');
+  const closeBtn = document.getElementById('camera-close-btn');
+  const thumbBtn = document.getElementById('camera-thumbnail-btn');
+  const flashBtn = document.getElementById('camera-flash-btn');
+  const flipBtn = document.getElementById('camera-flip-btn');
 
   startBtn?.addEventListener('click', startCamera);
   captureBtn?.addEventListener('click', capturePhoto);
   doneBtn?.addEventListener('click', finishScanning);
+  closeBtn?.addEventListener('click', finishScanning);
+  flashBtn?.addEventListener('click', toggleFlash);
+  flipBtn?.addEventListener('click', switchCamera);
   
-  // We'll add a way to switch camera later if needed, but keeping UI clean for now.
+  thumbBtn?.addEventListener('click', () => {
+    if (pages.length > 0) {
+      openPageEditor(pages[pages.length - 1].id);
+    }
+  });
 }
 
 let facingMode = 'environment';
+let isFlashOn = false;
 
 async function startCamera() {
   try {
-    cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: facingMode }, width: { ideal: 1920 }, height: { ideal: 1080 } }
-    });
+    // Make camera full screen INSTANTLY before requesting video
+    document.body.classList.add('camera-fullscreen');
+    
+    // Request highest possible resolution (up to 4K) for top-notch quality
+    const constraints = {
+      video: { 
+        facingMode: { ideal: facingMode }, 
+        width: { ideal: 4096 }, 
+        height: { ideal: 2160 },
+        advanced: [{ focusMode: 'continuous' }] 
+      }
+    };
+    
+    cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
     const video = document.getElementById('camera-video');
     video.srcObject = cameraStream;
     video.play().catch(console.error);
+    
     document.getElementById('camera-controls').style.display = 'flex';
+    document.getElementById('camera-top-utils').style.display = 'flex';
     document.getElementById('camera-placeholder').style.display = 'none';
+    
+    // Check if flash is supported
+    const track = cameraStream.getVideoTracks()[0];
+    const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+    const flashBtn = document.getElementById('camera-flash-btn');
+    if (capabilities.torch) {
+      flashBtn.style.display = 'flex';
+      // Apply previous flash state if on
+      if (isFlashOn) {
+        track.applyConstraints({ advanced: [{ torch: true }] }).catch(console.error);
+        flashBtn.classList.add('active');
+      } else {
+        flashBtn.classList.remove('active');
+      }
+    } else {
+      flashBtn.style.display = 'none';
+    }
     
     // Reset thumbnail UI on start if no pages
     updateCameraThumbnail();
   } catch (err) {
+    document.body.classList.remove('camera-fullscreen');
     toast.error(i18n.t('scanner.camera.error'));
   }
 }
 
-function stopCamera() {
+async function toggleFlash() {
+  if (!cameraStream) return;
+  const track = cameraStream.getVideoTracks()[0];
+  const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+  if (!capabilities.torch) {
+    toast.error('Flashlight not supported on this device');
+    return;
+  }
+  
+  isFlashOn = !isFlashOn;
+  try {
+    await track.applyConstraints({ advanced: [{ torch: isFlashOn }] });
+    const flashBtn = document.getElementById('camera-flash-btn');
+    if (isFlashOn) {
+      flashBtn.classList.add('active');
+    } else {
+      flashBtn.classList.remove('active');
+    }
+  } catch (err) {
+    console.error('Failed to toggle flash', err);
+    isFlashOn = false;
+  }
+}
+
+async function switchCamera() {
+  facingMode = facingMode === 'environment' ? 'user' : 'environment';
+  
+  // Briefly stop the current stream
   if (cameraStream) {
     cameraStream.getTracks().forEach(t => t.stop());
+  }
+  
+  // Restart with new facing mode
+  await startCamera();
+}
+
+function stopCamera() {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(t => {
+      // Turn off torch before stopping if on
+      if (isFlashOn && t.getCapabilities && t.getCapabilities().torch) {
+        t.applyConstraints({ advanced: [{ torch: false }] }).catch(() => {});
+      }
+      t.stop();
+    });
     cameraStream = null;
   }
   const video = document.getElementById('camera-video');
   if (video) video.srcObject = null;
   const controls = document.getElementById('camera-controls');
   if (controls) controls.style.display = 'none';
+  const topUtils = document.getElementById('camera-top-utils');
+  if (topUtils) topUtils.style.display = 'none';
   const placeholder = document.getElementById('camera-placeholder');
   if (placeholder) placeholder.style.display = 'flex';
+  
+  // Exit full screen camera
+  document.body.classList.remove('camera-fullscreen');
 }
 
 function updateCameraThumbnail() {
