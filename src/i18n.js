@@ -6,6 +6,7 @@
 const translations = {
   en: {
     // Navigation
+    'nav.home': 'Home',
     'nav.scanner': 'Scanner',
     'nav.compress': 'Compress',
     'nav.idcard': 'ID Card',
@@ -45,7 +46,8 @@ const translations = {
     'scanner.camera.stop': 'Stop Camera',
     'scanner.camera.error': 'Camera access denied. Please allow camera permissions.',
     'scanner.settings': 'PDF Settings',
-    'scanner.reorder': 'Drag to reorder pages',
+    'scanner.reorder': 'Tap to edit · Use arrows to reorder',
+    'scanner.edit.title': 'Edit Page',
 
     // Compress Page
     'compress.title': 'PDF Compressor',
@@ -130,6 +132,9 @@ const translations = {
     'idcard.arrange.horizontal': 'Side by Side',
     'idcard.arrange.passport': 'Card Size',
     'idcard.arrange.fill': 'Fill Page',
+    'idcard.arrange.twopage': '2 Pages',
+    'idcard.arrange.page': 'Page',
+    'idcard.arrange.twopage.hint': 'Each side will be on its own full page',
     'idcard.arrange.hint': 'Drag to move • Corner handles to resize',
     'idcard.export.pdf': 'PDF Document',
     'idcard.export.image': 'Image (JPG)',
@@ -275,6 +280,7 @@ const translations = {
 
   bn: {
     // Navigation
+    'nav.home': 'হোম',
     'nav.scanner': 'স্ক্যানার',
     'nav.compress': 'কম্প্রেস',
     'nav.idcard': 'আইডি কার্ড',
@@ -314,7 +320,8 @@ const translations = {
     'scanner.camera.stop': 'ক্যামেরা বন্ধ করুন',
     'scanner.camera.error': 'ক্যামেরা অ্যাক্সেস অস্বীকৃত। দয়া করে ক্যামেরা অনুমতি দিন।',
     'scanner.settings': 'পিডিএফ সেটিংস',
-    'scanner.reorder': 'পৃষ্ঠা সাজাতে টেনে আনুন',
+    'scanner.reorder': 'সম্পাদনা করতে ট্যাপ করুন · তীর দিয়ে সাজান',
+    'scanner.edit.title': 'পৃষ্ঠা সম্পাদনা',
 
     // Compress Page
     'compress.title': 'পিডিএফ কম্প্রেসর',
@@ -399,6 +406,9 @@ const translations = {
     'idcard.arrange.horizontal': 'পাশাপাশি',
     'idcard.arrange.passport': 'কার্ড সাইজ',
     'idcard.arrange.fill': 'পৃষ্ঠা ভরাট',
+    'idcard.arrange.twopage': '২ পৃষ্ঠা',
+    'idcard.arrange.page': 'পৃষ্ঠা',
+    'idcard.arrange.twopage.hint': 'প্রতিটি পাশ নিজের পুরো পৃষ্ঠায় থাকবে',
     'idcard.arrange.hint': 'সরাতে টানুন • কোণ থেকে আকার বদলান',
     'idcard.export.pdf': 'পিডিএফ ডকুমেন্ট',
     'idcard.export.image': 'ছবি (JPG)',

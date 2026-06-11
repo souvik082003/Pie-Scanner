@@ -43,6 +43,7 @@ let dragState = null;
 let exportFormat = 'pdf';
 let exportPageSize = 'a4';
 let exportQuality = 85;
+let currentLayout = 'vertical';
 
 const ID_TYPES = [
   { key: 'aadhaar', icon: '🪪', defaultMode: 'double' },
@@ -106,7 +107,7 @@ function renderStepIndicator() {
   let dots = '';
   for (let i = 1; i <= 4; i++) {
     const cls = i === currentStep ? 'active' : (i < currentStep ? 'completed' : '');
-    dots += `<div class="id-step-dot ${cls}" data-step="${i}"></div>`;
+    dots += `<div class="id-step-dot ${cls}" data-step="${i}">${i}</div>`;
     if (i < 4) {
       dots += `<div class="id-step-line ${i < currentStep ? 'completed' : ''}"></div>`;
     }
@@ -179,13 +180,13 @@ function renderStep2() {
         <div class="id-side-indicator">
           <div class="id-side">
             <div class="id-side-box ${currentSide === 'front' ? 'active' : ''} ${frontCaptured ? 'captured' : ''}">
-              ${frontImage ? `<img src="${frontImage}" alt="Front"/>` : `<span class="side-placeholder">${t('idcard.front')}</span>`}
+              ${frontImage ? `<img src="${frontImage}" alt="Front"/>` : `<span class="side-placeholder">${ICONS.camera}</span>`}
             </div>
             <span class="id-side-label">${t('idcard.front')}</span>
           </div>
           <div class="id-side">
             <div class="id-side-box ${currentSide === 'back' ? 'active' : ''} ${backCaptured ? 'captured' : ''}">
-              ${backImage ? `<img src="${backImage}" alt="Back"/>` : `<span class="side-placeholder">${t('idcard.back')}</span>`}
+              ${backImage ? `<img src="${backImage}" alt="Back"/>` : `<span class="side-placeholder">${ICONS.camera}</span>`}
             </div>
             <span class="id-side-label">${t('idcard.back')}</span>
           </div>
@@ -329,12 +330,16 @@ function renderToolbar() {
 }
 
 function renderFilterCarousel() {
+  const thumbSrc = currentEditSide === 'front'
+    ? (frontEdited || frontImage)
+    : (backEdited || backImage);
+
   return `
     <div class="id-filter-carousel">
       ${FILTERS.map(f => `
         <div class="id-filter-item ${activeFilter === f.key ? 'active' : ''}" data-filter="${f.key}">
           <div class="id-filter-preview">
-            <img id="id-filter-thumb-${f.key}" src="" alt="${f.key}" style="filter: ${f.css}" />
+            <img id="id-filter-thumb-${f.key}" src="${thumbSrc || ''}" alt="${f.key}" style="filter: ${f.css}" />
           </div>
           <span class="id-filter-name">${t('idcard.filter.' + f.key)}</span>
         </div>
@@ -369,6 +374,10 @@ function renderStep4() {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
             ${t('idcard.arrange.fill')}
           </button>
+          <button class="id-layout-btn" data-layout="twopage">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="8" height="11" rx="1"/><rect x="14" y="11" width="8" height="11" rx="1"/></svg>
+            ${t('idcard.arrange.twopage')}
+          </button>
         </div>
       ` : ''}
 
@@ -399,6 +408,14 @@ function renderStep4() {
           ` : ''}
         </div>
       </div>
+
+      ${showBack ? `
+        <div class="id-twopage-indicator" id="id-twopage-indicator" style="display: none;">
+          <div class="id-twopage-label">📄 ${t('idcard.arrange.page')} 1: ${t('idcard.front')}</div>
+          <div class="id-twopage-label">📄 ${t('idcard.arrange.page')} 2: ${t('idcard.back')}</div>
+          <p class="text-xs text-secondary" style="margin-top: var(--space-1);">${t('idcard.arrange.twopage.hint')}</p>
+        </div>
+      ` : ''}
 
       <!-- Export format -->
       <h3 class="text-lg font-semibold">${t('idcard.exportAs')}</h3>
@@ -575,11 +592,12 @@ function initStep2() {
 async function startIdCamera() {
   try {
     cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode, width: { ideal: 1920 }, height: { ideal: 1080 } }
+      video: { facingMode: { ideal: facingMode }, width: { ideal: 1920 }, height: { ideal: 1080 } }
     });
     const video = document.getElementById('id-camera-video');
     if (video) {
       video.srcObject = cameraStream;
+      video.play().catch(console.error);
       document.getElementById('id-camera-container').style.display = 'block';
     }
   } catch (err) {
@@ -640,7 +658,7 @@ function assignCapture(dataUrl) {
 }
 
 // ---- Step 3 Init ----
-function initStep3() {
+async function initStep3() {
   const canvas = document.getElementById('id-editor-canvas');
   if (!canvas) return;
 
@@ -650,7 +668,7 @@ function initStep3() {
     : (backEdited || backImage);
 
   if (imgSrc) {
-    drawImageToCanvas(canvas, imgSrc);
+    await drawImageToCanvas(canvas, imgSrc);
   }
 
   // Side thumb switching
@@ -748,6 +766,17 @@ function redo() {
 }
 
 function updateToolUI() {
+  // Clean up crop overlay if switching away from crop
+  const wrap = document.getElementById('id-editor-wrap');
+  if (wrap) {
+    const cropOverlay = wrap.querySelector('.crop-overlay');
+    if (cropOverlay && activeTool !== 'crop') {
+      if (cropOverlay._cleanup) cropOverlay._cleanup();
+      else cropOverlay.remove();
+      cropState = null;
+    }
+  }
+
   // Update toolbar active state
   document.querySelectorAll('.id-tool-btn').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.tool === activeTool);
@@ -821,10 +850,14 @@ function renderToolPanel() {
     case 'crop':
       return `
         <div class="id-tool-panel">
-          <p class="text-xs text-secondary" style="margin-bottom:var(--space-3)">Click and drag on the image to crop</p>
-          <button class="btn btn-primary btn-sm btn-block" id="id-apply-crop">
-            ${t('idcard.edit.crop')} — Apply
-          </button>
+          <div style="display:flex;gap:var(--space-2)">
+            <button class="btn btn-secondary btn-sm btn-block" id="id-cancel-crop">
+              ✕ ${t('common.cancel')}
+            </button>
+            <button class="btn btn-primary btn-sm btn-block" id="id-apply-crop">
+              ✓ ${t('editor.apply')}
+            </button>
+          </div>
         </div>
       `;
     case 'rotate':
@@ -851,15 +884,20 @@ function setupFilterListeners() {
     if (src) img.src = src;
   });
 
-  document.querySelectorAll('.id-filter-item').forEach(item => {
-    item.addEventListener('click', () => {
+  // Use event delegation on the carousel for reliable click handling
+  const carousel = document.querySelector('.id-filter-carousel');
+  if (carousel) {
+    carousel.addEventListener('click', (e) => {
+      const item = e.target.closest('.id-filter-item');
+      if (!item) return;
       const filterKey = item.dataset.filter;
+      if (!filterKey) return;
       activeFilter = filterKey;
       applyFilterToCanvas(filterKey);
       document.querySelectorAll('.id-filter-item').forEach(f => f.classList.remove('active'));
       item.classList.add('active');
     });
-  });
+  }
 }
 
 async function applyFilterToCanvas(filterKey) {
@@ -868,17 +906,36 @@ async function applyFilterToCanvas(filterKey) {
 
   pushUndo();
 
-  const src = currentEditSide === 'front' ? (frontImage) : (backImage);
-  const img = await loadImage(src);
+  const src = currentEditSide === 'front'
+    ? (frontImage || frontEdited)
+    : (backImage || backEdited);
 
-  canvas.width = img.width;
-  canvas.height = img.height;
-  const ctx = canvas.getContext('2d');
+  if (!src) return;
 
-  const filter = FILTERS.find(f => f.key === filterKey);
-  ctx.filter = filter ? filter.css : 'none';
-  ctx.drawImage(img, 0, 0);
-  ctx.filter = 'none';
+  try {
+    const img = await loadImage(src);
+
+    const maxW = canvas.parentElement?.clientWidth || 400;
+    const maxH = 450;
+    let w = img.width, h = img.height;
+
+    if (w > maxW) { h = (h * maxW) / w; w = maxW; }
+    if (h > maxH) { w = (w * maxH) / h; h = maxH; }
+
+    canvas.width = img.width;
+    canvas.height = img.height;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+
+    const ctx = canvas.getContext('2d');
+
+    const filter = FILTERS.find(f => f.key === filterKey);
+    ctx.filter = filter ? filter.css : 'none';
+    ctx.drawImage(img, 0, 0);
+    ctx.filter = 'none';
+  } catch (err) {
+    console.error('Filter apply error:', err);
+  }
 }
 
 function setupToolPanelListeners() {
@@ -958,8 +1015,9 @@ function setupEraserDrawing() {
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    const touch = e.touches?.[0] || e.changedTouches?.[0];
+    const clientX = touch ? touch.clientX : e.clientX;
+    const clientY = touch ? touch.clientY : e.clientY;
     return {
       x: (clientX - rect.left) * scaleX,
       y: (clientY - rect.top) * scaleY
@@ -999,96 +1057,241 @@ let cropState = null;
 
 function setupCropTool() {
   const canvas = document.getElementById('id-editor-canvas');
-  if (!canvas) return;
+  const wrap = document.getElementById('id-editor-wrap');
+  if (!canvas || !wrap) return;
 
-  cropState = { startX: 0, startY: 0, endX: 0, endY: 0, active: false };
+  // Remove any existing crop overlay
+  const existing = wrap.querySelector('.crop-overlay');
+  if (existing) existing.remove();
 
-  const getPos = (e) => {
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+  // Store original image data for cancel
+  const originalImageData = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+
+  // Create the crop overlay UI
+  const overlay = document.createElement('div');
+  overlay.className = 'crop-overlay';
+  overlay.innerHTML = `
+    <div class="crop-mask crop-mask-top"></div>
+    <div class="crop-mask crop-mask-bottom"></div>
+    <div class="crop-mask crop-mask-left"></div>
+    <div class="crop-mask crop-mask-right"></div>
+    <div class="crop-selection" id="crop-selection">
+      <div class="crop-grid">
+        <div class="crop-grid-line crop-grid-h1"></div>
+        <div class="crop-grid-line crop-grid-h2"></div>
+        <div class="crop-grid-line crop-grid-v1"></div>
+        <div class="crop-grid-line crop-grid-v2"></div>
+      </div>
+      <div class="crop-handle crop-handle-tl" data-handle="tl"></div>
+      <div class="crop-handle crop-handle-tr" data-handle="tr"></div>
+      <div class="crop-handle crop-handle-bl" data-handle="bl"></div>
+      <div class="crop-handle crop-handle-br" data-handle="br"></div>
+      <div class="crop-handle crop-handle-t" data-handle="t"></div>
+      <div class="crop-handle crop-handle-b" data-handle="b"></div>
+      <div class="crop-handle crop-handle-l" data-handle="l"></div>
+      <div class="crop-handle crop-handle-r" data-handle="r"></div>
+    </div>
+  `;
+  wrap.style.position = 'relative';
+  wrap.appendChild(overlay);
+
+  // Initial crop = 10% inset from each edge
+  const INSET = 0.08;
+  cropState = {
+    left: INSET,
+    top: INSET,
+    right: 1 - INSET,
+    bottom: 1 - INSET,
+  };
+
+  function updateCropUI() {
+    const selection = overlay.querySelector('.crop-selection');
+    const maskTop = overlay.querySelector('.crop-mask-top');
+    const maskBottom = overlay.querySelector('.crop-mask-bottom');
+    const maskLeft = overlay.querySelector('.crop-mask-left');
+    const maskRight = overlay.querySelector('.crop-mask-right');
+
+    const l = cropState.left * 100;
+    const t = cropState.top * 100;
+    const r = cropState.right * 100;
+    const b = cropState.bottom * 100;
+
+    selection.style.left = l + '%';
+    selection.style.top = t + '%';
+    selection.style.width = (r - l) + '%';
+    selection.style.height = (b - t) + '%';
+
+    // Update masks
+    maskTop.style.cssText = `top:0;left:0;right:0;height:${t}%`;
+    maskBottom.style.cssText = `bottom:0;left:0;right:0;height:${100 - b}%`;
+    maskLeft.style.cssText = `top:${t}%;left:0;width:${l}%;height:${b - t}%`;
+    maskRight.style.cssText = `top:${t}%;right:0;width:${100 - r}%;height:${b - t}%`;
+  }
+
+  updateCropUI();
+
+  // Interaction state
+  let dragMode = null; // 'move' | 'tl' | 'tr' | 'bl' | 'br' | 't' | 'b' | 'l' | 'r'
+  let startTouch = null;
+  let startCrop = null;
+
+  function getRelPos(e) {
+    const rect = overlay.getBoundingClientRect();
+    const touch = e.touches?.[0] || e.changedTouches?.[0];
+    const clientX = touch ? touch.clientX : e.clientX;
+    const clientY = touch ? touch.clientY : e.clientY;
     return {
-      x: (clientX - rect.left) * scaleX,
-      y: (clientY - rect.top) * scaleY
+      x: (clientX - rect.left) / rect.width,
+      y: (clientY - rect.top) / rect.height
     };
-  };
+  }
 
-  const drawCropOverlay = () => {
-    if (!cropState.active) return;
-    const ctx = canvas.getContext('2d');
-    // Re-draw from original first — we need the temp image
-    const x1 = Math.min(cropState.startX, cropState.endX);
-    const y1 = Math.min(cropState.startY, cropState.endY);
-    const x2 = Math.max(cropState.startX, cropState.endX);
-    const y2 = Math.max(cropState.startY, cropState.endY);
+  function onStart(e) {
+    e.preventDefault();
+    e.stopPropagation();
 
-    // Dim outside crop area
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-    ctx.fillRect(0, 0, canvas.width, y1);
-    ctx.fillRect(0, y2, canvas.width, canvas.height - y2);
-    ctx.fillRect(0, y1, x1, y2 - y1);
-    ctx.fillRect(x2, y1, canvas.width - x2, y2 - y1);
+    const handle = e.target.closest('.crop-handle');
+    const selection = e.target.closest('.crop-selection');
 
-    // Crop border
-    ctx.strokeStyle = '#6366f1';
-    ctx.lineWidth = 2;
-    ctx.setLineDash([6, 3]);
-    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-    ctx.setLineDash([]);
-  };
-
-  let tempImageData = null;
-
-  canvas.addEventListener('mousedown', (e) => {
-    if (activeTool !== 'crop') return;
-    const pos = getPos(e);
-    cropState.startX = pos.x;
-    cropState.startY = pos.y;
-    cropState.active = true;
-    tempImageData = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
-  });
-
-  canvas.addEventListener('mousemove', (e) => {
-    if (!cropState.active || activeTool !== 'crop') return;
-    const pos = getPos(e);
-    cropState.endX = pos.x;
-    cropState.endY = pos.y;
-    if (tempImageData) {
-      canvas.getContext('2d').putImageData(tempImageData, 0, 0);
+    if (handle) {
+      dragMode = handle.dataset.handle;
+    } else if (selection) {
+      dragMode = 'move';
+    } else {
+      return;
     }
-    drawCropOverlay();
-  });
 
-  canvas.addEventListener('mouseup', () => {
-    if (activeTool !== 'crop') return;
-    cropState.active = false;
-  });
+    startTouch = getRelPos(e);
+    startCrop = { ...cropState };
+  }
 
+  function onMove(e) {
+    if (!dragMode) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const pos = getRelPos(e);
+    const dx = pos.x - startTouch.x;
+    const dy = pos.y - startTouch.y;
+    const MIN_SIZE = 0.1; // minimum 10% of canvas
+
+    if (dragMode === 'move') {
+      const w = startCrop.right - startCrop.left;
+      const h = startCrop.bottom - startCrop.top;
+      let newL = startCrop.left + dx;
+      let newT = startCrop.top + dy;
+      // Clamp
+      newL = Math.max(0, Math.min(1 - w, newL));
+      newT = Math.max(0, Math.min(1 - h, newT));
+      cropState.left = newL;
+      cropState.top = newT;
+      cropState.right = newL + w;
+      cropState.bottom = newT + h;
+    } else {
+      // Handle resize
+      let { left, top, right, bottom } = startCrop;
+
+      if (dragMode.includes('l')) left = Math.max(0, Math.min(right - MIN_SIZE, startCrop.left + dx));
+      if (dragMode.includes('r') || dragMode === 'r') right = Math.min(1, Math.max(left + MIN_SIZE, startCrop.right + dx));
+      if (dragMode.includes('t') || dragMode === 't') top = Math.max(0, Math.min(bottom - MIN_SIZE, startCrop.top + dy));
+      if (dragMode.includes('b') || dragMode === 'b') bottom = Math.min(1, Math.max(top + MIN_SIZE, startCrop.bottom + dy));
+
+      // For single-axis handles
+      if (dragMode === 't') { left = startCrop.left; right = startCrop.right; }
+      if (dragMode === 'b') { left = startCrop.left; right = startCrop.right; }
+      if (dragMode === 'l') { top = startCrop.top; bottom = startCrop.bottom; }
+      if (dragMode === 'r') { top = startCrop.top; bottom = startCrop.bottom; }
+
+      cropState.left = left;
+      cropState.top = top;
+      cropState.right = right;
+      cropState.bottom = bottom;
+    }
+
+    updateCropUI();
+  }
+
+  function onEnd(e) {
+    if (dragMode) {
+      e?.preventDefault?.();
+    }
+    dragMode = null;
+    startTouch = null;
+    startCrop = null;
+  }
+
+  // Event listeners on the overlay
+  overlay.addEventListener('mousedown', onStart);
+  overlay.addEventListener('touchstart', onStart, { passive: false });
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('touchmove', onMove, { passive: false });
+  document.addEventListener('mouseup', onEnd);
+  document.addEventListener('touchend', onEnd);
+
+  // Store cleanup function
+  overlay._cleanup = () => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('touchmove', onMove);
+    document.removeEventListener('mouseup', onEnd);
+    document.removeEventListener('touchend', onEnd);
+    overlay.remove();
+  };
+
+  // Apply crop
   document.getElementById('id-apply-crop')?.addEventListener('click', () => {
-    if (!cropState || (cropState.startX === cropState.endX)) return;
+    if (!cropState) return;
     pushUndo();
 
-    const x1 = Math.min(cropState.startX, cropState.endX);
-    const y1 = Math.min(cropState.startY, cropState.endY);
-    const cw = Math.abs(cropState.endX - cropState.startX);
-    const ch = Math.abs(cropState.endY - cropState.startY);
+    const x = Math.round(cropState.left * canvas.width);
+    const y = Math.round(cropState.top * canvas.height);
+    const w = Math.round((cropState.right - cropState.left) * canvas.width);
+    const h = Math.round((cropState.bottom - cropState.top) * canvas.height);
 
-    if (cw < 10 || ch < 10) return;
+    if (w < 10 || h < 10) return;
 
-    if (tempImageData) {
-      canvas.getContext('2d').putImageData(tempImageData, 0, 0);
-    }
-
-    const imgData = canvas.getContext('2d').getImageData(x1, y1, cw, ch);
-    canvas.width = cw;
-    canvas.height = ch;
+    const imgData = canvas.getContext('2d').getImageData(x, y, w, h);
+    canvas.width = w;
+    canvas.height = h;
     canvas.getContext('2d').putImageData(imgData, 0, 0);
 
+    // Remove overlay
+    overlay._cleanup();
     cropState = null;
-    tempImageData = null;
+
+    // Switch back to filters
+    activeTool = 'filters';
+    const panelArea = document.getElementById('id-tool-panel-area');
+    if (panelArea) panelArea.innerHTML = renderToolPanel();
+    const filterArea = document.getElementById('id-filter-area');
+    if (filterArea) filterArea.innerHTML = renderFilterCarousel();
+
+    // Re-highlight toolbar
+    document.querySelectorAll('.id-tool-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.tool === 'filters');
+    });
+
     toast.success(t('common.success'));
+  });
+
+  // Cancel crop
+  document.getElementById('id-cancel-crop')?.addEventListener('click', () => {
+    // Restore original image
+    canvas.getContext('2d').putImageData(originalImageData, 0, 0);
+
+    // Remove overlay
+    overlay._cleanup();
+    cropState = null;
+
+    // Switch back to filters
+    activeTool = 'filters';
+    const panelArea = document.getElementById('id-tool-panel-area');
+    if (panelArea) panelArea.innerHTML = renderToolPanel();
+    const filterArea = document.getElementById('id-filter-area');
+    if (filterArea) filterArea.innerHTML = renderFilterCarousel();
+
+    document.querySelectorAll('.id-tool-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.tool === 'filters');
+    });
   });
 }
 
@@ -1182,6 +1385,7 @@ function initStep4() {
 }
 
 function applyLayout(layout) {
+  currentLayout = layout;
   switch (layout) {
     case 'vertical':
       cardPositions.front = { x: 10, y: 5, w: 80, h: 42 };
@@ -1195,8 +1399,25 @@ function applyLayout(layout) {
       cardPositions.front = { x: 5, y: 3, w: 90, h: 45 };
       cardPositions.back = { x: 5, y: 52, w: 90, h: 45 };
       break;
+    case 'twopage':
+      // Front takes full page, back goes to page 2
+      cardPositions.front = { x: 5, y: 5, w: 90, h: 90 };
+      cardPositions.back = { x: 5, y: 5, w: 90, h: 90 };
+      break;
   }
   refreshA4Cards();
+
+  // Show/hide back card in preview based on layout
+  const backEl = document.getElementById('id-a4-back');
+  if (backEl) {
+    backEl.style.display = layout === 'twopage' ? 'none' : '';
+  }
+
+  // Show page 2 indicator for twopage
+  const pageIndicator = document.getElementById('id-twopage-indicator');
+  if (pageIndicator) {
+    pageIndicator.style.display = layout === 'twopage' ? 'flex' : 'none';
+  }
 }
 
 function refreshA4Cards() {
@@ -1405,24 +1626,55 @@ async function exportAsPDF(frontSrc, backSrc, fileName, quality) {
     format: isA4 ? 'a4' : 'letter'
   });
 
-  // Draw front
-  if (frontSrc) {
-    const fp = cardPositions.front;
-    const x = (fp.x / 100) * pageW;
-    const y = (fp.y / 100) * pageH;
-    const w = (fp.w / 100) * pageW;
-    const h = (fp.h / 100) * pageH;
-    pdf.addImage(frontSrc, 'JPEG', x, y, w, h, undefined, 'MEDIUM');
-  }
+  if (currentLayout === 'twopage' && backSrc && scanMode === 'double') {
+    // Two-page mode: each side gets its own full page
+    // Page 1: Front
+    if (frontSrc) {
+      const margin = 10; // mm
+      const maxW = pageW - margin * 2;
+      const maxH = pageH - margin * 2;
+      const img = await loadImage(frontSrc);
+      const ratio = Math.min(maxW / img.width, maxH / img.height);
+      const w = img.width * ratio;
+      const h = img.height * ratio;
+      const x = (pageW - w) / 2;
+      const y = (pageH - h) / 2;
+      pdf.addImage(frontSrc, 'JPEG', x, y, w, h, undefined, 'MEDIUM');
+    }
 
-  // Draw back
-  if (backSrc && scanMode === 'double') {
-    const bp = cardPositions.back;
-    const x = (bp.x / 100) * pageW;
-    const y = (bp.y / 100) * pageH;
-    const w = (bp.w / 100) * pageW;
-    const h = (bp.h / 100) * pageH;
-    pdf.addImage(backSrc, 'JPEG', x, y, w, h, undefined, 'MEDIUM');
+    // Page 2: Back
+    pdf.addPage();
+    if (backSrc) {
+      const margin = 10;
+      const maxW = pageW - margin * 2;
+      const maxH = pageH - margin * 2;
+      const img = await loadImage(backSrc);
+      const ratio = Math.min(maxW / img.width, maxH / img.height);
+      const w = img.width * ratio;
+      const h = img.height * ratio;
+      const x = (pageW - w) / 2;
+      const y = (pageH - h) / 2;
+      pdf.addImage(backSrc, 'JPEG', x, y, w, h, undefined, 'MEDIUM');
+    }
+  } else {
+    // Single-page mode: use card positions
+    if (frontSrc) {
+      const fp = cardPositions.front;
+      const x = (fp.x / 100) * pageW;
+      const y = (fp.y / 100) * pageH;
+      const w = (fp.w / 100) * pageW;
+      const h = (fp.h / 100) * pageH;
+      pdf.addImage(frontSrc, 'JPEG', x, y, w, h, undefined, 'MEDIUM');
+    }
+
+    if (backSrc && scanMode === 'double') {
+      const bp = cardPositions.back;
+      const x = (bp.x / 100) * pageW;
+      const y = (bp.y / 100) * pageH;
+      const w = (bp.w / 100) * pageW;
+      const h = (bp.h / 100) * pageH;
+      pdf.addImage(backSrc, 'JPEG', x, y, w, h, undefined, 'MEDIUM');
+    }
   }
 
   pdf.save(fileName + '.pdf');
@@ -1484,6 +1736,7 @@ function resetAll() {
   exportFormat = 'pdf';
   exportPageSize = 'a4';
   exportQuality = 85;
+  currentLayout = 'vertical';
   refreshUI();
 }
 
